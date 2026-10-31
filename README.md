@@ -50,14 +50,14 @@
 7. [Пользователи и группы, sudo](#-7-пользователи-и-группы-sudo)
 8. [Процессы и сигналы](#-8-процессы-и-сигналы)
 9. [Информация о системе](#-9-информация-о-системе)
-10. [Диски и файловые системы](#-10-диски-и-файловые-системы)
+10. [🟡 Диски и файловые системы](#-10-диски-и-файловые-системы)
 11. [Сеть](#-11-сеть)
 12. [SSH, SCP, rsync](#-12-ssh-scp-rsync)
 13. [Архивы и сжатие](#-13-архивы-и-сжатие)
 14. [Пакетные менеджеры](#-14-пакетные-менеджеры-apt-dnf-pacman)
 15. [Systemd и службы](#-15-systemd-и-службы)
 16. [Логи и journalctl](#-16-логи-и-journalctl)
-17. [Обработка текста: sed, awk, cut, sort](#-17-обработка-текста-sed-awk-cut-sort)
+17. [🟡 Обработка текста: sed, awk, cut, sort](#-17-обработка-текста-sed-awk-cut-sort)
 18. [Перенаправление, пайпы, xargs](#-18-перенаправление-пайпы-xargs)
 19. [Bash: переменные и скрипты](#-19-bash-переменные-и-скрипты)
 20. [Горячие клавиши терминала](#-20-горячие-клавиши-терминала)
@@ -701,6 +701,8 @@ sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
+> ⚠️ `fallocate` работает на ext4, но **не подходит для XFS и Btrfs** — ядро откажется делать `swapon` на файле с нераспределёнными экстентами. Там создавай файл через `dd if=/dev/zero of=/swapfile bs=1M count=2048`.
+
 ---
 
 ## 🟢 11. Сеть
@@ -782,7 +784,7 @@ Host prod
 | `unzip arch.zip -d dir/` | Распаковать zip |
 | `gzip file` / `gunzip file.gz` | Сжать / распаковать файл |
 | `zcat file.gz` | Прочитать сжатый файл без распаковки |
-| `7z x arch.7z` | Распаковать 7z (пакет `p7zip`) |
+| `7z x arch.7z` | Распаковать 7z (пакет `p7zip-full`) |
 
 **Как запомнить ключи tar:** `c` — create, `x` — extract, `t` — list, `z` — gzip, `J` — xz, `j` — bzip2, `v` — verbose, `f` — file.
 
@@ -792,7 +794,7 @@ Host prod
 
 | Действие | Debian / Ubuntu | Fedora / RHEL | Arch |
 |---|---|---|---|
-| Обновить списки | `apt update` | `dnf check-update` | `pacman -Sy` |
+| Обновить списки | `apt update` | `dnf makecache` | `pacman -Sy` |
 | Обновить систему | `apt upgrade` | `dnf upgrade` | `pacman -Syu` |
 | Установить | `apt install pkg` | `dnf install pkg` | `pacman -S pkg` |
 | Удалить | `apt remove pkg` | `dnf remove pkg` | `pacman -R pkg` |
@@ -800,7 +802,7 @@ Host prod
 | Поиск | `apt search pkg` | `dnf search pkg` | `pacman -Ss pkg` |
 | Информация | `apt show pkg` | `dnf info pkg` | `pacman -Si pkg` |
 | Установленные | `apt list --installed` | `dnf list installed` | `pacman -Q` |
-| Чей это файл | `dpkg -S /bin/ls` | `rpm -qf /bin/ls` | `pacman -Qo /bin/ls` |
+| Чей это файл | `dpkg -S /usr/bin/ls` | `rpm -qf /bin/ls` | `pacman -Qo /bin/ls` |
 | Убрать лишнее | `apt autoremove` | `dnf autoremove` | `pacman -Rns $(pacman -Qdtq)` |
 | Установить файл | `dpkg -i pkg.deb` | `dnf install ./pkg.rpm` | `pacman -U pkg.tar.zst` |
 
