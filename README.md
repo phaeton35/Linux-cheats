@@ -1931,11 +1931,26 @@ sudo lynis audit system                               # комплексный �
 
 ### auditd — кто и когда трогал файл
 
+Обычные `ls -l` и `stat` покажут время изменения файла, но не скажут, какой процесс и пользователь за этим стояли. Это умеет подсистема аудита ядра — **auditd**: она регистрирует файловые операции на уровне ядра вместе с UID, PID и именем исполняемого файла.
+
 ```bash
-sudo auditctl -w /etc/passwd -p wa -k passwd_changes   # следить за записью и сменой атрибутов
-sudo ausearch -k passwd_changes -i                    # кто менял (с именами пользователей)
+sudo systemctl enable --now auditd                    # служба должна быть установлена и запущена
+
+sudo auditctl -w /etc/ssh/sshd_config -p wa -k sshd_config_changes
+# -w — следить за файлом; -p wa — писать (w) и менять атрибуты (a); -k — метка для поиска
+
+sudo ausearch -k sshd_config_changes -i               # события по метке: кто, какой процесс, когда
+sudo aureport -f                                      # сводный отчёт по файловым операциям
+sudo aureport -f --summary                            # то же в агрегированном виде
 sudo aureport --login --summary                       # сводка по входам
 ```
+
+💡 Полезно для аудита конфигураций, расследования неожиданных изменений и контроля критичных файлов (`/etc/passwd`, `/etc/sudoers`, sshd_config и т.п.).
+
+⚠️ Важные ограничения:
+
+- События, произошедшие **до** включения правила, восстановить нельзя — правила включают заранее.
+- Правила, добавленные через `auditctl`, **не сохраняются** после перезагрузки. Для постоянных правил пиши их в `/etc/audit/rules.d/*.rules` и применяй `sudo augenrules --load` (Debian/Ubuntu: пакет `auditd`; RHEL-семейство: `audit`).
 
 ### Шифрование и целостность
 
@@ -2945,4 +2960,3 @@ strace -e trace=openat ls /nonexistent 2>&1 | tail -3   # как выгляди�
 </div>
 
 <sub>linux шпаргалка · команды linux · linux cheat sheet · bash шпаргалка · терминал linux для начинающих · команды терминала ubuntu · linux commands · shell cheatsheet · devops · sysadmin · chmod · grep · sed · awk · ssh · systemctl · journalctl · cron · vim · lvm · raid · cgroups · namespaces · selinux · docker · podman · ebpf · strace · perf · sysctl · hardening · собеседование linux</sub>
-
