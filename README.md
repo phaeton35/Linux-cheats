@@ -94,6 +94,11 @@
 38. [🧰 Практические сценарии: пошаговые рецепты](#-38-практические-сценарии-пошаговые-рецепты)
 39. [🎓 Практикум: задачи с решениями](#-39-практикум-задачи-с-решениями)
 40. [Глоссарий](#-глоссарий)
+41. [🟡 nftables: файрвол нового поколения](#-41--nftables-файрвол-нового-поколения)
+42. [🟡 Диагностика сети: nmap, tshark, netcat, Wi-Fi](#-42--диагностика-сети-nmap-tshark-netcat-wi-fi)
+43. [🟡 Ввод Linux в домен AD: realmd + SSSD](#-43--ввод-linux-в-домен-ad-realmd--sssd)
+44. [🟡 Сетевые ФС и хранилища: SMB, NFS, iSCSI](#-44--сетевые-фс-и-хранилища-smb-nfs-iscsi)
+45. [💡 Парсеры и нагрузка: jc, yq, dasel, perl, stress-ng, hdparm](#-45--парсеры-и-нагрузка-jc-yq-dasel-perl-stress-ng-hdparm)
 
 ---
 
@@ -2892,6 +2897,257 @@ strace -e trace=openat ls /nonexistent 2>&1 | tail -3   # как выгляди�
 5. Настрой вход по SSH только по ключу, включи fail2ban и проверь, что после 5 неверных паролей с другой машины IP попадает в бан.
 6. Напиши свою службу systemd для любого скрипта с `Restart=on-failure`, убей процесс через `kill -9` и убедись, что systemd его поднял (`NRestarts` в `systemctl show`).
 7. Пройди первые 15 уровней [OverTheWire: Bandit](https://overthewire.org/wargames/bandit/).
+
+---
+
+## 🌐 41. 🟡 nftables: файрвол нового поколения
+
+Современный файрвол ядра Linux, заменил iptables (тот — legacy, через_COMPAT-слой). Иерархия: **таблица → цепочка → правило**, правила состоят из выражений и действий.
+
+▸ Debian 12 (bookworm) / Debian 13 (trixie) / Ubuntu 24.04: `nftables` — основной, `iptables` — через `iptables-nft` (legacy-обёртка).
+
+```bash
+sudo nft list ruleset                  # все текущие правила (главная команда)
+sudo nft list tables                   # список таблиц
+sudo apt install nftables && sudo systemctl enable --now nftables
+
+# Таблица и базовые цепочки
+sudo nft add table inet filter
+sudo nft add chain inet filter input '{ type filter hook input priority 0; policy drop; }'
+sudo nft add chain inet filter output '{ type filter hook output priority 0; policy accept; }'
+
+# Правила
+sudo nft add rule inet filter input iif lo accept
+sudo nft add rule inet filter input ct state established,related accept
+sudo nft add rule inet filter input tcp dport { 22, 80, 443 } accept
+sudo nft add rule inet filter input ip saddr 192.168.1.0/24 accept
+sudo nft add rule inet filter input icmp type echo-request limit rate 5/second accept
+
+# Счётчики и логи
+sudo nft add rule inet filter input tcp dport 23 counter drop
+sudo nft add rule inet filter input counter log prefix "DROP: " drop
+
+# Изменение и удаление (правила нумеруются с 1: nft -a list chain)
+sudo nft -a list chain inet filter input
+sudo nft delete rule inet filter input handle 5
+sudo nft flush chain inet filter input                # 🔴 удалить все правила цепочки
+sudo nft flush ruleset                                # 🔴 удалить ВСЁ — на удалённой машине = отрезать себе доступ
+
+# Сохранение и восстановление
+sudo nft list ruleset | sudo tee /etc/nftables.conf   # сохранить текущий набор
+sudo nft -f /etc/nftables.conf                        # применить файл
+```
+
+💡 `iptables-translate` переводит правило iptables в nftables: `iptables-translate -A INPUT -p tcp --dport 22 -j ACCEPT`.
+💡 Тестировать правила удалённо безопаснее через `systemd-run` с таймером отката: `sudo systemd-run --on-active=5m nft flush ruleset` — если через 5 минут ты жив, откат не нужен.
+
+---
+
+## 🕵️ 42. 🟡 Диагностика сети: nmap, tshark, netcat, Wi-Fi
+
+### nmap — сканирование хостов и портов
+
+```bash
+sudo apt install nmap
+nmap -sn 192.168.1.0/24               # найти живые хосты (ping-scan, без портов)
+nmap 192.168.1.10                     # топ-1000 TCP-портов
+nmap -p 22,80,443 192.168.1.10        # конкретные порты
+nmap -p- 192.168.1.10                 # 🔴 все 65535 портов (долго)
+nmap -sV 192.168.1.10                 # определить версии служб
+nmap -O 192.168.1.10                  # угадать ОС (нужен root)
+nmap -sU -p 53,123 192.168.1.10       # UDP-порты (нужен root, медленно)
+nmap --script vuln 192.168.1.10       # 🔴 NSE-скрипты проверки уязвимостей — только на СВОИХ хостах
+```
+
+🔴 Сканировать можно только свои хосты/сети или с письменного разрешения — чужие сети сканировать незаконно.
+
+### tshark — tcpdump с разбором пакетов
+
+```bash
+sudo apt install tshark
+sudo tshark -i eth0                                   # слушать интерфейс
+sudo tshark -i eth0 -f "tcp port 443"                 # capture filter (синтаксис как в tcpdump)
+sudo tshark -i eth0 -Y "http.request" -T fields -e http.host -e http.request.uri
+sudo tshark -i eth0 -Y "dns" -T fields -e dns.qry.name | sort -u   # какие DNS-имена resolves сеть
+sudo tshark -i eth0 -w capture.pcap                   # записать в файл
+tshark -r capture.pcap -q -z conv,tcp                 # топ TCP-диалогов из файла
+```
+
+### netcat (nc) — «швейцарский нож» TCP/UDP
+
+```bash
+nc -zv host 22                        # проверить порт (как telnet, но проще)
+nc -l 8080 > file.bin                 # 🔴 приёмник: принять файл
+nc host 8080 < file.bin               # отправитель
+nc -l 9999 -e /bin/bash               # 🔴🔴 reverse shell — только в изолированной лабе, опасно
+printf 'GET / HTTP/1.0\r\n\r\n' | nc host 80      # ручной HTTP-запрос
+```
+
+### Wi-Fi-утилиты
+
+▸ Linux Mint 22.3 (Cinnamon, X11): сеть управляется NetworkManager, графике и скриптам — `nmcli`.
+
+```bash
+nmcli device wifi list                # сканирование точек доступа
+nmcli device wifi connect "SSID" password "пароль"
+nmcli device wifi connect "SSID" password "п" band a channel 40 freq 5180   # зафиксировать канал
+iw dev wlan0 link                     # состояние подключения (SSID, сигнал, битрейт)
+iw dev wlan0 scan | grep -E 'freq:|signal:|SSID:'                            # подробный скан (нужен root)
+iw phy                                # возможности радиомодуля (каналы, ширины, стандарты)
+iwconfig wlan0                        # устаревший, но всё ещё встречается
+```
+
+💡 `iw dev wlan0 scan` показывает, на каких каналах сидят соседние сети, — первая проверка при «Wi-Fi отваливается» (перекрытие каналов, DFS).
+
+---
+
+## 🏰 43. 🟡 Ввод Linux в домен AD: realmd + SSSD
+
+Позволяет логиниться на Linux-хост доменными учётками AD. Связка: **realmd** (обнаружение и ввод в домен) + **SSSD** (кэширование и PAM/NSS).
+
+▸ Debian 12/13, Ubuntu 24.04:
+
+```bash
+sudo apt install realmd sssd sssd-tools sssd-ad adcli krb5-user \
+  libpam-sss libnss-sss samba-common-bin oddjob oddjob-mkhomedir
+
+realm discover ad.example.com         # обнаружить домен (нужен рабочий DNS на контроллер домена)
+sudo realm join ad.example.com -U admin           # ввести в домен (создаст sssd.conf и pam-настройки сам)
+sudo realm join ad.example.com -U admin --computer-ou="OU=Linux,DC=ad,DC=example,DC=com"
+sudo realm list                       # статус: configured: kerberos-member, client-software: sssd
+
+id user@ad.example.com                # проверить доменного пользователя
+su - user@ad.example.com              # вход; homedir создаст oddjob-mkhomedir
+
+# Разрешить логин только группе админов домена:
+sudo realm permit -g linux-admins
+sudo realm deny --all                 # 🔴 сначала запретить всем, потом разрешить группы
+
+# Группа domain admins в sudoers:
+echo '%linux-admins@ad.example.com ALL=(ALL) ALL' | sudo tee /etc/sudoers.d/ad-group
+
+sudo systemctl status sssd
+sudo sssctl domain-status ad.example.com      # состояние связи с DC
+sudo sssctl cache-clear                       # 🔴 сбросить кэш пользователей
+klist                                         # текущие kerberos-билеты
+```
+
+⚠️ Частые грабли: время на хосте расходится с DC больше чем на 5 минут → Kerberos падает (синхронизируй chrony с DC); DNS хоста должен резолвить SRV-записи домена (`dig SRV _ldap._tcp.ad.example.com`); короткое имя хоста ≤ 15 символов (ограничение NetBIOS).
+
+---
+
+## 📁 44. 🟡 Сетевые ФС и хранилища: SMB, NFS, iSCSI
+
+### SMB-сервер (samba)
+
+```bash
+sudo apt install samba
+sudo smbpasswd -a user                # добавить пользователя SAMBA (пароль отдельный от системного)
+sudo nano /etc/samba/smb.conf
+```
+
+```ini
+[share]
+   path = /srv/share
+   valid users = @smbusers
+   read only = no
+   create mask = 0664
+```
+
+```bash
+sudo systemctl restart smbd nmbd
+testparm                              # проверить конфиг (главная команда отладки)
+smbclient -L //host -U user           # посмотреть шары сервера
+```
+
+### SMB-клиент (монтирование)
+
+```bash
+sudo apt install cifs-utils
+sudo mount -t cifs //server/share /mnt -o credentials=/etc/smb-cred,uid=1000,vers=3.0
+# /etc/smb-cred: username=…, password=… (chmod 600!)
+# fstab: //server/share /mnt cifs credentials=/etc/smb-cred,_netdev,vers=3.0 0 0
+```
+
+### NFS-сервер и клиент
+
+```bash
+# сервер
+sudo apt install nfs-kernel-server
+echo '/srv/nfs 192.168.1.0/24(rw,sync,no_subtree_check)' | sudo tee -a /etc/exports
+sudo exportfs -ra                     # применить exports
+sudo exportfs -v                      # посмотреть активные экспорты
+# клиент
+sudo apt install nfs-common
+sudo mount -t nfs server:/srv/nfs /mnt -o vers=4.2
+showmount -e server                   # какие экспорты видны
+```
+
+💡 NFS v4 не нуждается в отдельных портах (всё через 2049) — проще для файрвола, чем v3 (там portmapper + mountd).
+
+### iSCSI — блочное устройство по сети
+
+```bash
+sudo apt install open-iscsi
+sudo systemctl enable --now iscsid
+sudo iscsiadm -m discovery -t sendtargets -p 192.168.1.50      # найти таргеты
+sudo iscsiadm -m node -T iqn.2026-01.example:disk1 -p 192.168.1.50 --login
+lsblk                                 # диск появился как /dev/sdX — дальше как обычный диск (mkfs, mount)
+sudo iscsiadm -m node -T iqn.2026-01.example:disk1 --logout
+```
+
+🔴 iSCSI-диск — блочное устройство: монтировать его одновременно с двух хостов без кластерной ФС = потеря данных.
+
+---
+
+## 🔧 45. 💡 Парсеры и нагрузка: jc, yq, dasel, perl, stress-ng, hdparm
+
+### jc — вывод любой команды в JSON
+
+```bash
+sudo apt install jc                   # или pip install jc
+jc dig google.com | jq '.[0].answer'
+jc df -h | jq '.[] | select(.mount_point=="/")'
+jc systemctl list-units | jq '.[] | select(.state=="failed")'
+jc /etc/fstab | jq                    # jc парсит и файлы
+```
+
+### yq / dasel / htmlq — YAML, TOML, HTML
+
+```bash
+yq -P '.services.web.image' docker-compose.yml      # mikefarah/yq v4: -P = pretty YAML
+yq '.a = 1' file.yml -i                             # изменить и сохранить
+dasel -f file.yml -r yaml 'users.[0].name'          # единый синтаксис для yaml/json/toml/xml
+htmlq 'a.href' -f page.html                         # CSS-селекторы для HTML (Rust)
+```
+
+💡 Связка `jc | jq` избавляет от grep/awk по выводу команд — надёжнее и короче.
+
+### perl-однострочники (когда sed/awk не хватает)
+
+```bash
+perl -pi -e 's/foo/bar/g' file.txt    # как sed -i
+perl -ne 'print "$1\n" if /(error\s+\d+)/i' app.log
+perl -lane 'print $F[1] if $F[3] > 100' data.txt   # поля как в awk: @F
+```
+
+### stress-ng — нагрузочное тестирование
+
+```bash
+sudo apt install stress-ng
+stress-ng --cpu 4 --timeout 60s                  # 4 воркера CPU на минуту
+stress-ng --vm 2 --vm-bytes 512M --timeout 30s   # давление на память (проверка OOM)
+stress-ng --hdd 2 --hdd-bytes 1G --timeout 30s   # диск
+stress-ng --cpu 4 --metrics-brief --timeout 60s  # с метриками
+```
+
+### hdparm — диски
+
+```bash
+sudo hdparm -Tt /dev/sda              # скорость кэша и чтения с диска
+sudo hdparm -I /dev/sda               # полная информация об устройстве
+sudo hdparm -B 254 /dev/sda           # APM: агрессивность парковки головок (255 = off)
+```
 
 ---
 
