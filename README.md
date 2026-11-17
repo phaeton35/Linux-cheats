@@ -99,6 +99,7 @@
 43. [🟡 Ввод Linux в домен AD: realmd + SSSD](#-43--ввод-linux-в-домен-ad-realmd--sssd)
 44. [🟡 Сетевые ФС и хранилища: SMB, NFS, iSCSI](#-44--сетевые-фс-и-хранилища-smb-nfs-iscsi)
 45. [💡 Парсеры и нагрузка: jc, yq, dasel, perl, stress-ng, hdparm](#-45--парсеры-и-нагрузка-jc-yq-dasel-perl-stress-ng-hdparm)
+46. [🟡 Обслуживание и оптимизация ФС: ext4, XFS, Btrfs, ZFS](#-46--обслуживание-и-оптимизация-фс-ext4-xfs-btrfs-zfs)
 
 ---
 
@@ -3148,6 +3149,76 @@ sudo hdparm -Tt /dev/sda              # скорость кэша и чтени�
 sudo hdparm -I /dev/sda               # полная информация об устройстве
 sudo hdparm -B 254 /dev/sda           # APM: агрессивность парковки головок (255 = off)
 ```
+
+---
+
+## 🧹 46. 🟡 Обслуживание и оптимизация ФС: ext4, XFS, Btrfs, ZFS
+
+> Общее правило: ext4/XFS — «раз в год заглянуть», Btrfs/ZFS — регулярный scrub. Дефрагментация ext4 почти не нужна (extent-аллокатор), у ZFS/Btrfs её нет как операции — там copy-on-write.
+
+### ext4 — проверка, оптимизация, дефрагментация
+
+```bash
+sudo e2fsck -f /dev/sda1              # 🔴 проверка/ремонт ТОЛЬКО на отмонтированной ФС; -p — авто-исправление мелочей
+sudo dumpe2fs -h /dev/sda1            # параметры ФС (uuid, счётчики монтирований, опции)
+sudo tune2fs -l /dev/sda1             # то же, короче
+sudo tune2fs -m 1 /dev/sda1           # зарезервировано для root 1% вместо 5% (на больших дисках — гигабайты)
+sudo tune2fs -c 0 /dev/sda1           # отключить принудительный fsck по счётчику монтирований
+
+sudo e4defrag /dev/sda1               # дефрагментация ext4 (онлайн); e4defrag -c — оценка фрагментации
+sudo fstrim -av                       # TRIM всех смонтированных ФС (SSD)
+systemctl status fstrim.timer         # в Debian/Ubuntu еженедельный TRIM уже включён
+```
+
+💡 Для SSD в `/etc/fstab` добавляй опции `noatime,discard` (или полагайся на `fstrim.timer`): `UUID=… / ext4 defaults,noatime 0 1`. `noatime` убирает запись времени чтения — меньше записи на диск.
+
+### XFS — ремонт и дефрагментация
+
+```bash
+sudo xfs_info /mount                  # геометрия ФС
+sudo xfs_repair -n /dev/sdb1          # 🔴 проверка без изменений (только размонтированный)
+sudo xfs_repair -L /dev/sdb1          # 🔴🔴 обнулить журнал — последнее средство, потеряешь незаписанные данные
+sudo xfs_fsr /mount                   # онлайн-дефрагментация XFS
+```
+
+### Btrfs — scrub, balance, defragment
+
+```bash
+sudo btrfs filesystem df /            # реальное использование data/metadata
+sudo btrfs filesystem usage /         # подробнее
+sudo btrfs scrub start /              # проверка целостности по checksums (онлайн, не мешает работе)
+sudo btrfs scrub status /
+sudo btrfs device stats /             # ошибки устройств
+sudo btrfs balance start -dusage=50 / # перераспределить данные (лечит «диск полон при свободном месте»)
+sudo btrfs defragment -r -czstd /data # дефрагментация + сжатие файлов (CoW-фрагментация лечится так)
+sudo btrfs subvolume list /
+```
+
+⚠️ Btrfs фрагментируется от CoW при частых мелких записях (БД, VM-диски) — там либо `chattr +C` (no CoW) на каталог, либо не используй Btrfs для VM-дисков. 🔴 `btrfs check --repair` — только по совету документации, офлайн.
+
+### ZFS — scrub, TRIM, ARC
+
+```bash
+sudo zpool scrub tank                 # полная проверка целостности — по расписанию раз в месяц
+sudo zpool status -v tank             # ошибки с указанием файлов
+sudo zpool trim tank                  # TRIM для SSD-пулов
+sudo zpool set autotrim=on tank       # 🔵 continuous TRIM на SSD-пулах
+zpool history tank                    # журнал всех операций с пулом
+sudo zpool export tank && sudo zpool import tank    # 🔴 переэкспорт (при переносе дисков)
+zfs get compression,atime tank
+```
+
+▸ Ограничение ARC-кэша (по умолчанию ZFS забирает до 50% RAM):
+
+```bash
+cat /sys/module/zfs/parameters/zfs_arc_max
+# постоянно:
+echo 'options zfs zfs_arc_max=8589934592' | sudo tee /etc/modprobe.d/zfs.conf   # 8 GiB
+arcstat 1                              # статистика ARC в реальном времени
+arc_summary | head -30                 # сводка hit-rate, размер
+```
+
+💡 ZFS не дефрагментируют: CoW сам управляет размещением. При высокой фрагментации (смотри `zpool list -v`, FRAG) помогает только перезапись данных на новый пул.
 
 ---
 
