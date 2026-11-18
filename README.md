@@ -3197,6 +3197,42 @@ sudo btrfs subvolume list /
 
 ⚠️ Btrfs фрагментируется от CoW при частых мелких записях (БД, VM-диски) — там либо `chattr +C` (no CoW) на каталог, либо не используй Btrfs для VM-дисков. 🔴 `btrfs check --repair` — только по совету документации, офлайн.
 
+### Дефрагментация Btrfs и возврат места: безопасный порядок
+
+> ⚠️ Главное правило: **если у раздела есть снимки (Timeshift, Snapper) или reflink-копии (`cp --reflink`), дефрагментация разрывает совместное использование блоков** — занятое место может вырасти вплоть до удвоения. Сначала удали ненужные снимки, потом дефрагментируй.
+
+```bash
+sudo btrfs subvolume list /          # есть ли снимки (path вида @snapshots/…)
+sudo btrfs subvolume snapshot -r /@ /@ 2>/dev/null; true   # — только для проверки структуры, снимки удаляй через Timeshift/Snapper или:
+sudo btrfs subvolume delete /путь/к/снимку
+
+# 1. Дефрагментация (онлайн, -r рекурсивно). ⚠️ -r не заходит в другие подтома: @home и др. обрабатывай отдельно
+sudo btrfs filesystem defragment -r -v /
+sudo btrfs filesystem defragment -r -v /home
+
+# 2. Заодно пересжать файлы (ускоряет чтение, экономит место):
+sudo btrfs filesystem defragment -r -v -czstd /
+# без сжатия — убери -c; если раздел смонтирован с compress, а сжимать не хочешь:
+sudo mount -o remount,compress=no /
+
+# 3. Балансировка вместо дефрагментации «для места»: упаковка полупустых чанков
+sudo btrfs balance start -dusage=50 /   # переставить данные из чанков, заполненных <50%
+
+# 4. TRIM на SSD после освобождения:
+sudo fstrim -av
+```
+
+Авто-режим в fstab: `defaults,autodefrag,compress=zstd` — фоновая дефрагментация при закрытии файла. ⚠️ `autodefrag` **не для** больших файлов и нагрузок типа БД/VM-дисков (много лишней перезаписи); на SSD включай осознанно.
+
+Проверка сжатия — насколько реально сожаты данные:
+
+```bash
+findmnt -t btrfs                     # есть ли compress=zstd в опциях монтирования
+sudo apt install btrfs-compsize      # Debian/Ubuntu (compsize)
+sudo compsize /                      # коэффициент сжатия: TOTAL, zstd/lzo/zlib, none
+sudo btrfs filesystem du -s /файл    # Total vs EXCLUSIVE — если EXCLUSIVE меньше, файл сжат
+```
+
 ### ZFS — scrub, TRIM, ARC
 
 ```bash
