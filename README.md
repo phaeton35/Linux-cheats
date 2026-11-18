@@ -3170,7 +3170,8 @@ sudo fstrim -av                       # TRIM всех смонтированны
 systemctl status fstrim.timer         # в Debian/Ubuntu еженедельный TRIM уже включён
 ```
 
-💡 Для SSD в `/etc/fstab` добавляй опции `noatime,discard` (или полагайся на `fstrim.timer`): `UUID=… / ext4 defaults,noatime 0 1`. `noatime` убирает запись времени чтения — меньше записи на диск.
+💡 Для SSD рекомендую `noatime` + еженедельный `fstrim.timer` вместо постоянного `discard` в fstab (меньше служебных операций при каждом удалении файла): `UUID=… / ext4 defaults,noatime 0 1` и `systemctl enable --now fstrim.timer` (в Debian/Ubuntu уже включён).
+🔴 `e4defrag` на SSD-разделах не запускай: скорости не прибавит, а ресурс ячеек потратит.
 
 ### XFS — ремонт и дефрагментация
 
