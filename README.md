@@ -831,6 +831,52 @@ Host prod
 ▸ Debian 13 🆕 (с apt 3.0): новый столбчатый вывод, улучшенный решатель зависимостей; синтаксис команд не изменился
 ▸ Linux Mint 22.3: базируется на Ubuntu 24.04, тот же apt; обновления обычно ставятся через менеджер обновлений mintupdate
 
+### 🟡 unattended-upgrades: автообновления безопасности (Debian/Ubuntu)
+
+> Инструмент фоновой автоматической установки обновлений (как правило — только security). Не заменяет контроль администратора: он делает то, что разрешено в `Origins-Pattern`, и ничего больше.
+
+```bash
+sudo apt install unattended-upgrades apt-listchanges   # apt-listchanges — видеть, что меняется
+sudo dpkg-reconfigure --priority=low unattended-upgrades   # включить (пишет 20auto-upgrades)
+unattended-upgrade --dry-run --debug   # тест: покажет "Allowed origins are:" — что реально попадёт под автаобновление
+tail -50 /var/log/unattended-upgrades/unattended-upgrades.log   # реальный лог
+```
+
+▸ Debian 12 (bookworm):
+
+```
+# /etc/apt/apt.conf.d/20auto-upgrades  — включение:
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+
+# /etc/apt/apt.conf.d/50unattended-upgrades — Origins-Pattern: какие репозитории можно апгрейдить
+```
+
+▸ Debian 13 (trixie): при обычной (неинтерактивной) установке пакет уже включает сам себя — пишет `20auto-upgrades` с единицами; вопрос debconf задаётся только на низком приоритете.
+
+💡 **Не редактируй `50unattended-upgrades` напрямую** — файл принадлежит пакету: при его обновлении получите конфликт conffile. Свои настройки клади в отдельный drop-in **`/etc/apt/apt.conf.d/52unattended-upgrades-local`**: он читается позже, и его значения переопределяют пакстные.
+
+⚠️ **Списки `Origins-Pattern` между conf-файлами объединяются (merge), а не заменяются.** Стоковый файл уже разрешает `label=Debian` (обычные обновления); если нужно строго «только security», обнули список в своём файле первой строкой, а затем добавь свои паттерны.
+
+```
+// /etc/apt/apt.conf.d/52unattended-upgrades-local
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+};
+Unattended-Upgrade::Package-Blacklist {
+//    "postgresql-";             // что НЕ обновлять автоматически
+};
+Unattended-Upgrade::Mail "root";              // нужен почтовый агент: postfix / mailutils / msmtp
+Unattended-Upgrade::MailReport "only-on-error";   // или "always"
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";     // true + время — если обновилось ядро
+Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+```
+
+> 💡 Расписанием управляют systemd-таймеры `apt-daily.timer` (скачивание) и `apt-daily-upgrade.timer` (установка), с случайным дрейфом. Точное время задать drop-in: `systemctl edit apt-daily-upgrade.timer` → `OnCalendar=` + `RandomizedDelaySec=0`.
+
+> 💡 Вbled «что пора обновить, но не ставь» — пакет `apticron`: ежедневные письма со списком доступных обновлений.
 ---
 
 ## 🟢 15. Systemd и службы
