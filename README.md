@@ -838,7 +838,7 @@ Host prod
 ```bash
 sudo apt install unattended-upgrades apt-listchanges   # apt-listchanges — видеть, что меняется
 sudo dpkg-reconfigure --priority=low unattended-upgrades   # включить (пишет 20auto-upgrades)
-unattended-upgrade --dry-run --debug   # тест: покажет "Allowed origins are:" — что реально попадёт под автаобновление
+unattended-upgrade --dry-run --debug   # тест: покажет "Allowed origins are:" — что реально попадёт под автообновление
 tail -50 /var/log/unattended-upgrades/unattended-upgrades.log   # реальный лог
 ```
 
@@ -876,7 +876,7 @@ Unattended-Upgrade::Automatic-Reboot-Time "03:30";
 
 > 💡 Расписанием управляют systemd-таймеры `apt-daily.timer` (скачивание) и `apt-daily-upgrade.timer` (установка), с случайным дрейфом. Точное время задать drop-in: `systemctl edit apt-daily-upgrade.timer` → `OnCalendar=` + `RandomizedDelaySec=0`.
 
-> 💡 Вbled «что пора обновить, но не ставь» — пакет `apticron`: ежедневные письма со списком доступных обновлений.
+> 💡 Автообновление можно включать и выборочно: если не хочешь автоматом — `apticron` (или `apt-config`) шлёт письма со списком доступных обновлений, ставишь вручную.
 ---
 
 ## 🟢 15. Systemd и службы
